@@ -67,8 +67,8 @@
   - 主流程脚本
   - 支持groundtruth(纯源码分析) baseline(屏蔽某个文件源码，无摘要分析) method(屏蔽某个文件源码，有摘要分析)三种模式
   - 支持llm(大模型摘要)/sa(静态分析摘要)模式，依赖于上面的模式，只针对method模式生效
+  - 在llm模式下，支持taint/memory模式
   - 支持单独启用codechecker_driver/extractor/comparator这三个脚本
-  - 
 - extractor.py
   - 提取每个项目每个文件的分析结果和整个项目的分析耗时，转换成中间结果
   - 输入
