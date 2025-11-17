@@ -83,6 +83,10 @@
     - 项目对应的 待比对 中间结果的目录
   - 输出
     - 最终的result结果
+- compile.py
+  - 生成compile_commands.json的脚本
+  - 首先根据项目中的Configure/configure文件进行配置
+  - 再驱动codechecker生成compile_commands.json
 - codechecker_driver.py
   - 驱动codechecker分析单个项目
   - 输入
