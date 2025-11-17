@@ -38,7 +38,7 @@ def configure_project(project_path: str, configure_cmd: Optional[str] = None) ->
     if configure_cmd:
         print(f"Running configure command: {configure_cmd} (cwd={p})")
         with pushd(p):
-            subprocess.run(configure_cmd, shell=True, check=True, cwd=str(p))
+            subprocess.run(configure_cmd, shell=True, check=True)
         return
 
     # detect configure script (case-insensitive, e.g., 'configure' or 'Configure')
@@ -54,7 +54,7 @@ def configure_project(project_path: str, configure_cmd: Optional[str] = None) ->
         cmd = ["sh", configure_candidate.name]
         print(f"Found configure script ({configure_candidate.name}), running: {' '.join(cmd)} (cwd={p})")
         with pushd(p):
-            subprocess.run(cmd, check=True, cwd=str(p))
+            subprocess.run(cmd, check=True)
         return
 
     if cmakelists.exists():
@@ -62,7 +62,7 @@ def configure_project(project_path: str, configure_cmd: Optional[str] = None) ->
         cmd = ["cmake", "."]
         print(f"Found CMakeLists.txt, running: {' '.join(cmd)} (cwd={p})")
         with pushd(p):
-            subprocess.run(cmd, check=True, cwd=str(p))
+            subprocess.run(cmd, check=True)
         return
 
     print(f"No configure step detected in {p}; skipping configure.")
@@ -88,7 +88,7 @@ def generate_compile_commands(project_path: str, build_cmd: str = "make", output
         try:
             print(f"Running: make clean (cwd={p})")
             with pushd(p):
-                subprocess.run(["make", "clean"], check=True, cwd=str(p))
+                subprocess.run(["make", "clean"], check=True)
         except subprocess.CalledProcessError as e:
             print(f"make clean failed: {e}; continuing")
 
@@ -104,7 +104,7 @@ def generate_compile_commands(project_path: str, build_cmd: str = "make", output
 
     print(f"Running CodeChecker to record build: {' '.join(cmd)} (cwd={p})")
     with pushd(p):
-        subprocess.run(cmd, check=True, cwd=str(p))
+        subprocess.run(cmd, check=True)
 
     out_path = p / output
     if not out_path.exists():
