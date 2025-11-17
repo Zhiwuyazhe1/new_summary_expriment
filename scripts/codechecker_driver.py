@@ -23,6 +23,8 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
+import json
 from typing import List, Optional
 
 
@@ -144,6 +146,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 		help="Directory containing summaries to use when --use-summary is set",
 	)
 
+	# Note: CodeChecker analyzer configuration is provided via --saargs-dir
+	# (saargs_dir). We intentionally do not add a separate --codechecker-config
+	# argument to avoid duplication; saargs_dir will be recorded in metadata.
+
 	p.add_argument("--no-ctu", action="store_true", help="Disable CTU analysis")
 	p.add_argument(
 		"--codechecker-bin",
@@ -159,18 +165,19 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 	return p.parse_args(argv)
 
 
+
 def main(argv: Optional[List[str]] = None) -> int:
 	args = parse_args(argv)
+
+	# Record start time and ensure output dir exists (run_codechecker will
+	# also ensure it exists but we want to be able to write metadata in case
+	# the run fails early).
+	start_ts = time.time()
+	os.makedirs(args.output_dir, exist_ok=True)
+
+	return_code = 0
 	try:
-		# ALWAYS create a temporary saargs file. When --use-summary is set the
-		# temporary saargs will point to the provided --summary-dir. When
-		# --use-summary is NOT set the temporary saargs will point to
-		# --null-summary-dir (a directory expected to contain no summaries).
-		# This keeps the interface compatible with tools that require a
-		# --saargs path while allowing a "no-summary" mode.
-    
-		# Call run_codechecker with the path (or None) for saargs
-		run_codechecker(
+		proc = run_codechecker(
 			saargs=args.saargs_dir,
 			output_dir=args.output_dir,
 			compile_commands=args.compile_commands,
@@ -182,16 +189,42 @@ def main(argv: Optional[List[str]] = None) -> int:
 			dry_run=args.dry_run,
 			verbose=args.verbose,
 		)
+		# If CodeChecker ran without raising, capture its return code.
+		return_code = getattr(proc, "returncode", 0)
 	except subprocess.CalledProcessError as exc:
+		# Preserve existing behavior: print stdout/stderr then return the
+		# non-zero exit code, but still record timing metadata.
 		print("CodeChecker failed with return code:", exc.returncode, file=sys.stderr)
 		if exc.stdout:
 			print(exc.stdout)
 		if exc.stderr:
 			print(exc.stderr, file=sys.stderr)
-		return exc.returncode
-		
+		return_code = exc.returncode
+	finally:
+		end_ts = time.time()
+		elapsed = end_ts - start_ts
 
-	return 0
+		metadata = {
+			"start_timestamp": start_ts,
+			"end_timestamp": end_ts,
+			"elapsed_seconds": elapsed,
+			"saargs_dir": args.saargs_dir,
+			"compile_commands": args.compile_commands,
+			"codechecker_bin": args.codechecker_bin,
+			"ctu_enabled": not args.no_ctu,
+			"extra_args": args.extra_args,
+		}
+
+		try:
+			meta_path = os.path.join(args.output_dir, "analysis_time.json")
+			with open(meta_path, "w", encoding="utf-8") as mf:
+				json.dump(metadata, mf, indent=2)
+			if not args.dry_run:
+				print(f"Wrote analysis metadata to {meta_path}")
+		except Exception as e:
+			print("Failed to write analysis metadata:", e, file=sys.stderr)
+
+	return return_code
 
 
 if __name__ == "__main__":
