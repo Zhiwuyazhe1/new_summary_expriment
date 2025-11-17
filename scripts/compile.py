@@ -50,8 +50,30 @@ def configure_project(project_path: str, configure_cmd: Optional[str] = None) ->
             break
 
     if configure_candidate is not None:
-        # run with sh to be safe on Windows with MSYS/WSL bash available
-        cmd = ["sh", configure_candidate.name]
+        # Decide how to run the configure script:
+        #  - If the script is executable, prefer running it directly (./Configure)
+        #  - If it looks like a Perl script (shebang mentioning perl or contains typical perl tokens), run with `perl`.
+        #  - Otherwise fall back to `sh` (for classic configure shell scripts).
+        try:
+            with configure_candidate.open("r", encoding="utf-8", errors="ignore") as f:
+                first_line = f.readline()
+                # read a bit more to detect tokens like 'use strict' that indicate Perl
+                rest = f.read(4096)
+        except Exception:
+            first_line = ""
+            rest = ""
+
+        cmd = None
+        # prefer executing directly if the file is marked executable
+        if os.access(str(configure_candidate), os.X_OK):
+            cmd = [f"./{configure_candidate.name}"]
+        # if shebang mentions perl or file contains typical perl tokens, use perl
+        elif ("perl" in first_line.lower()) or ("use strict" in rest) or rest.lstrip().startswith("use "):
+            cmd = ["perl", configure_candidate.name]
+        else:
+            # fallback to sh for Bourne shell style configure scripts
+            cmd = ["sh", configure_candidate.name]
+
         print(f"Found configure script ({configure_candidate.name}), running: {' '.join(cmd)} (cwd={p})")
         with pushd(p):
             subprocess.run(cmd, check=True)
