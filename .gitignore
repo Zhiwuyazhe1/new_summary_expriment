@@ -53,3 +53,10 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# diy files
+intermediates/
+projects/
+reports/
+results/
+summaries/

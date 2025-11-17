@@ -59,7 +59,7 @@
   - disabled_projects
     - 项目名数组，表明禁用分析的项目
   - baseline
-    - 对象数组，对象为 "project_name" : "file_name" 的形式，表示要注释掉的文件
+    - 对象数组，对象为 "project_name" : ["file_name"] 的形式，表示要注释掉的文件
 
 ## 脚本设计
 
