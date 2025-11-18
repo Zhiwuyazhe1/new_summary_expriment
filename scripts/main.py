@@ -19,12 +19,22 @@ import tempfile
 from typing import List, Optional
 import time
 
-# import local helper scripts (alias `compile` as `compile_mod` to avoid
-# shadowing the builtin)
-from scripts import codechecker_driver as codechecker_mod
-from scripts import extractor as extractor_mod
-from scripts import comparator as comparator_mod
-from scripts import compile as compile_mod
+# import local helper scripts. Support two invocation styles:
+#  - python -m scripts.main  (package imports work)
+#  - python scripts/main.py  (script-style; package name 'scripts' may not be importable)
+try:
+    # preferred when run as a package (python -m scripts.main)
+    from scripts import codechecker_driver as codechecker_mod
+    from scripts import extractor as extractor_mod
+    from scripts import comparator as comparator_mod
+    from scripts import compile as compile_mod
+except Exception:
+    # fallback to direct module imports when executed as a script from inside the scripts/ dir
+    # This happens when sys.path[0] is the scripts/ directory and 'scripts' package is not resolvable.
+    import codechecker_driver as codechecker_mod
+    import extractor as extractor_mod
+    import comparator as comparator_mod
+    import compile as compile_mod
 
 
 def _write_temp_saargs_file(summary_dir: str) -> str:
