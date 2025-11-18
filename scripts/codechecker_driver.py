@@ -157,6 +157,25 @@ def run_codechecker(
 					sf_out.write(sa_contents)
 		except Exception:
 			pass
+		# Persist a small analysis_time.json so downstream tools (extractor)
+		# can read timing metadata even when this helper is used directly.
+		try:
+			metadata = {
+				"start_timestamp": start_ts,
+				"end_timestamp": start_ts + elapsed,
+				"elapsed_seconds": elapsed,
+				"saargs_dir": saargs,
+				"compile_commands": compile_commands,
+				"codechecker_bin": codechecker_bin,
+				"ctu_enabled": ctu,
+				"extra_args": extra_args,
+			}
+			meta_path = os.path.join(output_dir, "analysis_time.json")
+			with open(meta_path, 'w', encoding='utf-8') as mf:
+				json.dump(metadata, mf, indent=2)
+		except Exception:
+			# Best-effort: failures to write metadata should not affect analysis
+			pass
 	except Exception:
 		# Ignore failures to write logs; do not change analysis behavior
 		pass
