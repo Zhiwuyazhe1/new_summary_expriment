@@ -81,6 +81,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--null-summary-dir", default=os.path.join(repo_root, 'null_summary'), help="Fallback null summary dir")
     p.add_argument("--reports-root", default=os.path.join(repo_root, 'reports'), help="Where to place CodeChecker reports")
     p.add_argument("--findings-root", default=os.path.join(repo_root, 'findings'), help="Where to place extractor outputs")
+    p.add_argument("--intermediates-root", default=os.path.join(repo_root, 'intermediates'), help="Base dir for intermediate JSONs (groundtruth/candidates)")
     p.add_argument("--compare-root", default=os.path.join(repo_root, 'results'), help="Comparator outputs")
     p.add_argument("--ground-truth-base", default=os.path.join(repo_root, 'groundtruth'), help="Groundtruth base dir")
 
@@ -180,11 +181,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     for proj in projects:
         print(f"=== processing project: {proj} ===")
         project_src = os.path.abspath(os.path.join(projects_base, proj))
-        reports_dir = os.path.abspath(os.path.join(args.reports_root, proj))
-        findings_dir = os.path.abspath(os.path.join(args.findings_root, proj))
-        compare_out_base = os.path.abspath(args.compare_root)
+        # Place outputs under a subdir named by the selected mode so runs for
+        # different modes don't clobber each other. e.g. reports/groundtruth/<proj>
+        reports_dir = os.path.abspath(os.path.join(args.reports_root, args.mode, proj))
+        # extractor should write intermediate JSON into the intermediates tree
+        # so comparator can find groundtruth and candidate intermediate files
+        # under intermediates/<mode>/<proj>
+        findings_dir = os.path.abspath(os.path.join(args.intermediates_root, args.mode, proj))
+        compare_out_base = os.path.abspath(os.path.join(args.compare_root, args.mode))
 
-        # ensure dirs
+        # ensure per-project output dirs. For codechecker we want to clear
+        # the reports dir before running so generated plists are fresh.
         if 'codechecker' in modules:
             _ensure_empty_dir(reports_dir)
         else:
@@ -275,19 +282,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                 except Exception as e:
                     print(f"extractor failed for {proj}: {e}", file=sys.stderr)
 
-            # comparator
-            if 'comparator' in modules:
-                try:
-                    # comparator expects groundtruth and candidate dirs/files
-                    gt_dir = os.path.abspath(os.path.join(args.ground_truth_base, proj))
-                    print(f"Running comparator: groundtruth={gt_dir} compare={findings_dir} outdir={compare_out_base}")
-                    comparator_mod.main(['--groundtruth', gt_dir, '--compare', findings_dir, '--outdir', compare_out_base])
-                except SystemExit as se:
-                    # comparator may call sys.exit; capture code
-                    if se.code:
-                        print(f"comparator exited with code {se.code}")
-                except Exception as e:
-                    print(f"comparator failed for {proj}: {e}", file=sys.stderr)
+            # comparator is run globally after all projects are processed so it
+            # can compare the entire groundtruth set against the mode-scoped
+            # candidate directory (e.g. findings/<mode>/). We skip per-project
+            # comparator runs here.
 
         finally:
             # cleanup temporary saargs file
@@ -296,6 +294,23 @@ def main(argv: Optional[List[str]] = None) -> int:
                     os.remove(temp_saargs_path)
             except Exception:
                 pass
+
+    # After processing all projects, run comparator once comparing the
+    # ground-truth directory to the mode-scoped findings directory.
+    if 'comparator' in modules:
+        try:
+            # Use intermediates tree for groundtruth and candidate intermediate JSONs
+            gt_root = os.path.abspath(os.path.join(args.intermediates_root, 'groundtruth'))
+            compare_candidates = os.path.abspath(os.path.join(args.intermediates_root, args.mode))
+            os.makedirs(compare_out_base, exist_ok=True)
+            print(f"Running global comparator: groundtruth={gt_root} compare={compare_candidates} outdir={compare_out_base}")
+            try:
+                comparator_mod.main(['--groundtruth', gt_root, '--compare', compare_candidates, '--outdir', compare_out_base])
+            except SystemExit as se:
+                if se.code:
+                    print(f"comparator exited with code {se.code}")
+        except Exception as e:
+            print(f"global comparator failed: {e}", file=sys.stderr)
 
     print("All done")
     return 0
