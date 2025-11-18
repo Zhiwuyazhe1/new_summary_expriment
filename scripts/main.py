@@ -69,7 +69,10 @@ def _ensure_empty_dir(path: str) -> None:
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     p = argparse.ArgumentParser(description="Main orchestrator: compile/codechecker/extract/compare")
-    p.add_argument("--config", default=os.path.join(repo_root, 'config.json'), help="Path to config.json")
+    # prefer the `configs/config.json` layout used in this workspace, but allow
+    # overriding with --config. We still accept a top-level config.json as
+    # a fallback (some examples use that layout).
+    p.add_argument("--config", default=os.path.join(repo_root, 'configs', 'config.json'), help="Path to config.json")
     p.add_argument("--projects-base", default=os.path.join(repo_root, 'projects'), help="Base dir with project variants")
     p.add_argument("--summaries-base", default=os.path.join(repo_root, 'summaries'), help="Base summaries dir")
     p.add_argument("--null-summary-dir", default=os.path.join(repo_root, 'null_summary'), help="Fallback null summary dir")
@@ -112,11 +115,24 @@ def _resolve_summary_dir(summaries_base: str, selection: str, proj: str, null_su
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
 
-    # load config.json
+    # load config.json (support common locations with a small fallback)
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     cfg_path = os.path.abspath(os.path.expanduser(args.config))
     if not os.path.exists(cfg_path):
-        print(f"config.json not found: {cfg_path}")
-        return 2
+        # try workspace convention: configs/config.json, then top-level config.json
+        alt1 = os.path.join(repo_root, 'configs', 'config.json')
+        alt2 = os.path.join(repo_root, 'config.json')
+        chosen = None
+        for alt in (alt1, alt2):
+            if os.path.exists(alt):
+                chosen = alt
+                break
+        if chosen:
+            print(f"config not found at {cfg_path}; using {chosen}")
+            cfg_path = chosen
+        else:
+            print(f"config.json not found: {cfg_path}")
+            return 2
 
     with open(cfg_path, 'r', encoding='utf-8') as f:
         cfg = json.load(f)
