@@ -208,11 +208,29 @@ def main(argv: Optional[List[str]] = None) -> int:
                     codechecker_exe = shutil.which('CodeChecker') or shutil.which('codechecker') or 'CodeChecker'
                     make_exe = shutil.which('make')
                     print(f"DRY RUN: would run in {project_src}:")
+                    # suggest running configure if detected
+                    cfg_script = None
+                    for cand in ('configure', 'Configure'):
+                        cand_path = os.path.join(project_src, cand)
+                        if os.path.isfile(cand_path):
+                            cfg_script = cand
+                            break
+                    cmakelists = os.path.join(project_src, 'CMakeLists.txt')
+                    if os.path.isfile(cmakelists):
+                        print(f"  - configure: 'cmake .' (cwd={project_src})")
+                    elif cfg_script:
+                        print(f"  - configure: './{cfg_script}' or 'sh ./{cfg_script}' (cwd={project_src})")
                     if make_exe:
-                        print(f"  - make clean (if applicable): 'make clean' (cwd={project_src})")
+                        print(f"  - build clean: 'make clean' (cwd={project_src})")
                     print(f"  - CodeChecker record: '{codechecker_exe} log --build \"{build_cmd}\" --output {output_name}' (cwd={project_src})")
                     print(f"DRY RUN: expected compile_commands.json at {os.path.join(project_src, output_name)}")
                 else:
+                    # perform configure step if applicable, then generate compile_commands
+                    try:
+                        # compile_mod provides configure_project to run project's configure
+                        compile_mod.configure_project(project_src)
+                    except Exception as e:
+                        print(f"configure step failed for {proj}: {e}", file=sys.stderr)
                     compile_mod.generate_compile_commands(project_src, build_cmd=build_cmd, output=output_name)
             except Exception as e:
                 print(f"compile step failed for {proj}: {e}", file=sys.stderr)
