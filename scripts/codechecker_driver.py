@@ -40,7 +40,7 @@ def run_codechecker(
 	timeout: Optional[int] = None,
 	dry_run: bool = False,
 	verbose: bool = False,
-	check: bool = True,
+	check: bool = False,
 ) -> subprocess.CompletedProcess:
 	"""Build and run the CodeChecker analyze command.
 
@@ -95,33 +95,25 @@ def run_codechecker(
 		# Return a dummy CompletedProcess
 		return subprocess.CompletedProcess(cmd, 0)
 
-	# Execute
-	try:
-		proc = subprocess.run(
-			cmd,
-			cwd=cwd,
-			stdout=subprocess.PIPE,
-			stderr=subprocess.PIPE,
-			text=True,
-			timeout=timeout,
-			check=check,
-		)
-	except subprocess.CalledProcessError as exc:
-		# Ensure we persist stdout/stderr to files for easier debugging and
-		# then re-raise so caller can keep existing behavior.
-		try:
-			os.makedirs(output_dir, exist_ok=True)
-			stdout_txt = getattr(exc, 'stdout', '') or ''
-			stderr_txt = getattr(exc, 'stderr', '') or ''
-			with open(os.path.join(output_dir, 'codechecker_stdout.txt'), 'w', encoding='utf-8') as sf:
-				sf.write(stdout_txt)
-			with open(os.path.join(output_dir, 'codechecker_stderr.txt'), 'w', encoding='utf-8') as ef:
-				ef.write(stderr_txt)
-		except Exception:
-			# Best-effort only; avoid masking original exception
-			pass
-		# Re-raise to preserve upstream error handling
-		raise
+	# Execute without auto-raising so callers can continue when analysis had
+	# partial failures (non-zero exit). If caller requests check=True we will
+	# raise after capturing stdout/stderr.
+	start_ts = time.time()
+	proc = subprocess.run(
+		cmd,
+		cwd=cwd,
+		stdout=subprocess.PIPE,
+		stderr=subprocess.PIPE,
+		text=True,
+		timeout=timeout,
+		check=False,
+	)
+	elapsed = time.time() - start_ts
+
+	# If the caller explicitly asked for check=True, raise with the captured
+	# output so existing callers depending on exceptions still work.
+	if proc.returncode != 0 and check:
+		raise subprocess.CalledProcessError(proc.returncode, cmd, output=proc.stdout, stderr=proc.stderr)
 
 	if verbose:
 		if proc.stdout:
@@ -139,6 +131,32 @@ def run_codechecker(
 			sf.write(proc.stdout or '')
 		with open(os.path.join(output_dir, 'codechecker_stderr.txt'), 'w', encoding='utf-8') as ef:
 			ef.write(proc.stderr or '')
+		# Also save an aggregated debug file with command, return code and a
+		# combined view of stdout/stderr for quick inspection.
+		try:
+			debug_path = os.path.join(output_dir, 'analysis_debug.txt')
+			with open(debug_path, 'w', encoding='utf-8') as df:
+				df.write(f"Command: {cmd_display}\n")
+				df.write(f"Return code: {proc.returncode}\n")
+				df.write(f"Elapsed seconds: {elapsed}\n")
+				df.write("\n--- STDOUT ---\n")
+				df.write(proc.stdout or '')
+				df.write("\n\n--- STDERR ---\n")
+				df.write(proc.stderr or '')
+		except Exception:
+			pass
+
+		# If saargs refers to a file (e.g. a temporary .saargs created by
+		# the orchestrator), copy its contents into the output dir so it's
+		# available for debugging.
+		try:
+			if saargs and os.path.isfile(saargs):
+				with open(saargs, 'r', encoding='utf-8') as sf_in:
+					sa_contents = sf_in.read()
+				with open(os.path.join(output_dir, 'saargs_used.saargs'), 'w', encoding='utf-8') as sf_out:
+					sf_out.write(sa_contents)
+		except Exception:
+			pass
 	except Exception:
 		# Ignore failures to write logs; do not change analysis behavior
 		pass
