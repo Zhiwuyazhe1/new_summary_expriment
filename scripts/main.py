@@ -73,7 +73,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     # overriding with --config. We still accept a top-level config.json as
     # a fallback (some examples use that layout).
     p.add_argument("--config", default=os.path.join(repo_root, 'configs', 'config.json'), help="Path to config.json")
-    p.add_argument("--projects-base", default=os.path.join(repo_root, 'projects'), help="Base dir with project variants")
+    # Default projects base follows the repository convention: <repo_root>/projects
+    # so callers normally don't need to pass --projects-base. If you store
+    # projects elsewhere you can still override with --projects-base.
+    p.add_argument("--projects-base", default=os.path.join(repo_root, 'projects'), help="Base dir with project variants (default: <repo_root>/projects)")
     p.add_argument("--summaries-base", default=os.path.join(repo_root, 'summaries'), help="Base summaries dir")
     p.add_argument("--null-summary-dir", default=os.path.join(repo_root, 'null_summary'), help="Fallback null summary dir")
     p.add_argument("--reports-root", default=os.path.join(repo_root, 'reports'), help="Where to place CodeChecker reports")
@@ -138,13 +141,31 @@ def main(argv: Optional[List[str]] = None) -> int:
         cfg = json.load(f)
 
     projects = cfg.get('projects', []) if isinstance(cfg, dict) else []
-    if not projects:
-        print("no projects specified in config.json")
-        return 0
 
-    # determine project subdir for mode
+    # determine project subdir for mode (e.g. <projects_base>/groundtruth)
     projects_base = args.projects_base
     projects_base = os.path.join(projects_base, args.mode)
+
+    # If config.json did not define projects, enumerate immediate subdirectories
+    # under the selected projects_base/mode directory so we automatically
+    # discover projects (this matches the expectation: enter the mode
+    # subdirectory then enumerate projects).
+    if not projects:
+        if os.path.isdir(projects_base):
+            try:
+                entries = sorted([d for d in os.listdir(projects_base) if os.path.isdir(os.path.join(projects_base, d))])
+                projects = entries
+                print(f"Discovered projects in {projects_base}: {projects}")
+            except Exception as e:
+                print(f"Failed to enumerate projects under {projects_base}: {e}")
+                projects = []
+        else:
+            print(f"no projects specified in config.json and projects_base not found: {projects_base}")
+            return 0
+
+    if not projects:
+        print("no projects to process")
+        return 0
 
     # parse modules
     if args.modules.strip().lower() == 'all':
@@ -180,7 +201,19 @@ def main(argv: Optional[List[str]] = None) -> int:
             try:
                 print(f"Running compile step for {proj} (produces compile_commands.json)")
                 # Use default build command and output name
-                compile_mod.generate_compile_commands(project_src, build_cmd='make', output='compile_commands.json')
+                build_cmd = 'make'
+                output_name = 'compile_commands.json'
+                # Respect global --execute: default is dry-run (do not execute external build/CodeChecker)
+                if not args.execute:
+                    codechecker_exe = shutil.which('CodeChecker') or shutil.which('codechecker') or 'CodeChecker'
+                    make_exe = shutil.which('make')
+                    print(f"DRY RUN: would run in {project_src}:")
+                    if make_exe:
+                        print(f"  - make clean (if applicable): 'make clean' (cwd={project_src})")
+                    print(f"  - CodeChecker record: '{codechecker_exe} log --build \"{build_cmd}\" --output {output_name}' (cwd={project_src})")
+                    print(f"DRY RUN: expected compile_commands.json at {os.path.join(project_src, output_name)}")
+                else:
+                    compile_mod.generate_compile_commands(project_src, build_cmd=build_cmd, output=output_name)
             except Exception as e:
                 print(f"compile step failed for {proj}: {e}", file=sys.stderr)
 

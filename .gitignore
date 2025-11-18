@@ -60,4 +60,6 @@ projects/
 reports/
 results/
 summaries/
+__pycache__/
+*.pyc
 
