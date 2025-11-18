@@ -106,8 +106,21 @@ def run_codechecker(
 			timeout=timeout,
 			check=check,
 		)
-	except subprocess.CalledProcessError:
-		# Re-raise to let caller handle it; include stdout/stderr for debugging
+	except subprocess.CalledProcessError as exc:
+		# Ensure we persist stdout/stderr to files for easier debugging and
+		# then re-raise so caller can keep existing behavior.
+		try:
+			os.makedirs(output_dir, exist_ok=True)
+			stdout_txt = getattr(exc, 'stdout', '') or ''
+			stderr_txt = getattr(exc, 'stderr', '') or ''
+			with open(os.path.join(output_dir, 'codechecker_stdout.txt'), 'w', encoding='utf-8') as sf:
+				sf.write(stdout_txt)
+			with open(os.path.join(output_dir, 'codechecker_stderr.txt'), 'w', encoding='utf-8') as ef:
+				ef.write(stderr_txt)
+		except Exception:
+			# Best-effort only; avoid masking original exception
+			pass
+		# Re-raise to preserve upstream error handling
 		raise
 
 	if verbose:
@@ -117,6 +130,18 @@ def run_codechecker(
 		if proc.stderr:
 			print("[CodeChecker stderr]")
 			print(proc.stderr, file=sys.stderr)
+
+	# Persist stdout/stderr into the output directory so callers can inspect
+	# the CodeChecker logs even when they don't enable --verbose.
+	try:
+		os.makedirs(output_dir, exist_ok=True)
+		with open(os.path.join(output_dir, 'codechecker_stdout.txt'), 'w', encoding='utf-8') as sf:
+			sf.write(proc.stdout or '')
+		with open(os.path.join(output_dir, 'codechecker_stderr.txt'), 'w', encoding='utf-8') as ef:
+			ef.write(proc.stderr or '')
+	except Exception:
+		# Ignore failures to write logs; do not change analysis behavior
+		pass
 
 	return proc
 

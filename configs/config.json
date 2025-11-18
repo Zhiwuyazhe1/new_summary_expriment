@@ -3,17 +3,14 @@
   "baseline": [
     {
       "sqlite3": [
-        "ext/misc/sqlite3.c"
       ]
     },
     {
       "openssl": [
-        "crypto/sha/sha1dgst.c"
       ]
     },
     {
       "binutils": [
-        "bfd/elf32_aout.c"
       ]
     }
   ]
