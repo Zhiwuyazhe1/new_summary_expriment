@@ -368,7 +368,6 @@ def generate_intermediate(reports_path: str, out_dir: str, project_name: Optiona
     "plist_metadata": plist_metadata,
     "timing": timing_meta,
   }
-
   def make_relative_path(abs_path: str, project_root: Optional[str]) -> str:
     if not project_root:
       return abs_path.replace('\\', '/')
