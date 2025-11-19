@@ -88,15 +88,21 @@ def build_clang_command(clang_bin: str, function_name: str, file_path: str, summ
 	"""构建 clang 分析命令的参数列表（适合传递给 subprocess.run）。
 
 	说明：不再显式注入 -I 头文件路径；运行前会切换到项目根目录以便 clang 在相对路径下寻找头文件。
+
+	命令格式按需调整为：
+	<clang> -analyze <source-file> -- <analyzer-args...>
+	这样 clang-check/clang 可以正确识别要分析的源文件与后续的 -Xanalyzer 参数。
 	"""
 
-	cmd = [clang_bin, "--analyze"]
-	# 保留 analyzer 的一些选项
+	# Start with analyzer invocation and the source file to analyze
+	# Use single-dash -analyze to match the common invocation form (clang-check examples use -analyze)
+	cmd: List[str] = [clang_bin, "-analyze", file_path, "--"]
 
+	# Append analyzer options as -Xanalyzer <arg> pairs
 	cmd += ["-Xanalyzer", "-analyzer-purge=none"]
 	cmd += ["-Xanalyzer", "-analyzer-checker=alpha.core.DumpSummary"]
-	cmd += ["-Xanalyzer", "-analyze-function"]
-	cmd += ["-Xanalyzer", function_name, file_path]
+	# analyze-function needs to be passed through -Xanalyzer; follow with the function name
+	cmd += ["-Xanalyzer", "-analyze-function", "-Xanalyzer", function_name]
 	cmd += ["-Xanalyzer", "-analyzer-config", "-Xanalyzer", "clear-overlap-offset=false"]
 	cmd += ["-Xanalyzer", "-analyzer-config", "-Xanalyzer", f"summary-dir={summary_dir}"]
 
