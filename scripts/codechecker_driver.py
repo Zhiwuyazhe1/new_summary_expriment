@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import threading
 import json
 from typing import List, Optional
 
@@ -99,38 +100,111 @@ def run_codechecker(
 	# partial failures (non-zero exit). If caller requests check=True we will
 	# raise after capturing stdout/stderr.
 	start_ts = time.time()
-	proc = subprocess.run(
+
+	# Use Popen and stream stdout/stderr to files while optionally printing
+	# to the terminal (behaves like 'tee' when verbose=True).
+	proc = subprocess.Popen(
 		cmd,
 		cwd=cwd,
 		stdout=subprocess.PIPE,
 		stderr=subprocess.PIPE,
 		text=True,
-		timeout=timeout,
-		check=False,
 	)
+
+	# Buffers to accumulate full output so we can return a CompletedProcess
+	stdout_lines: List[str] = []
+	stderr_lines: List[str] = []
+
+	# Ensure output dir exists before creating files for streaming
+	os.makedirs(output_dir, exist_ok=True)
+	stdout_path = os.path.join(output_dir, 'codechecker_stdout.txt')
+	stderr_path = os.path.join(output_dir, 'codechecker_stderr.txt')
+
+	# Reader helper that writes to buffer, file and optionally to console
+	def _stream_reader(pipe, collect: List[str], out_file, is_stdout: bool):
+		try:
+			for line in iter(pipe.readline, ''):
+				collect.append(line)
+				try:
+					out_file.write(line)
+					out_file.flush()
+				except Exception:
+					# best-effort write; ignore failures
+					pass
+				# Print to console only when verbose is requested
+				if verbose:
+					if is_stdout:
+						print(line, end='')
+					else:
+						print(line, end='', file=sys.stderr)
+		finally:
+			try:
+				pipe.close()
+			except Exception:
+				pass
+
+	# Open files and start reader threads
+	try:
+		sf = open(stdout_path, 'w', encoding='utf-8')
+	except Exception:
+		sf = None
+	try:
+		ef = open(stderr_path, 'w', encoding='utf-8')
+	except Exception:
+		ef = None
+
+	threads = []
+	if proc.stdout is not None:
+		t_out = threading.Thread(target=_stream_reader, args=(proc.stdout, stdout_lines, sf or open(os.devnull, 'w'), True), daemon=True)
+		t_out.start()
+		threads.append(t_out)
+	if proc.stderr is not None:
+		t_err = threading.Thread(target=_stream_reader, args=(proc.stderr, stderr_lines, ef or open(os.devnull, 'w'), False), daemon=True)
+		t_err.start()
+		threads.append(t_err)
+
+	# Wait for process completion with timeout semantics similar to subprocess.run
+	try:
+		proc.wait(timeout=timeout)
+	except subprocess.TimeoutExpired:
+		try:
+			proc.kill()
+		except Exception:
+			pass
+		# join reader threads briefly to flush what we have
+		for t in threads:
+			t.join(timeout=0.1)
+		raise
+
+	# Ensure reader threads have finished
+	for t in threads:
+		t.join()
+
 	elapsed = time.time() - start_ts
+	# Convert accumulated lines into strings similar to subprocess.run
+	proc_stdout = ''.join(stdout_lines)
+	proc_stderr = ''.join(stderr_lines)
+	# Build a CompletedProcess-like result
+	proc = subprocess.CompletedProcess(cmd, proc.returncode, stdout=proc_stdout, stderr=proc_stderr)
 
 	# If the caller explicitly asked for check=True, raise with the captured
 	# output so existing callers depending on exceptions still work.
 	if proc.returncode != 0 and check:
 		raise subprocess.CalledProcessError(proc.returncode, cmd, output=proc.stdout, stderr=proc.stderr)
 
-	if verbose:
-		if proc.stdout:
-			print("[CodeChecker stdout]")
-			print(proc.stdout)
-		if proc.stderr:
-			print("[CodeChecker stderr]")
-			print(proc.stderr, file=sys.stderr)
-
-	# Persist stdout/stderr into the output directory so callers can inspect
-	# the CodeChecker logs even when they don't enable --verbose.
+	# Persist stdout/stderr (already streamed during run) and write debug files
 	try:
-		os.makedirs(output_dir, exist_ok=True)
-		with open(os.path.join(output_dir, 'codechecker_stdout.txt'), 'w', encoding='utf-8') as sf:
-			sf.write(proc.stdout or '')
-		with open(os.path.join(output_dir, 'codechecker_stderr.txt'), 'w', encoding='utf-8') as ef:
-			ef.write(proc.stderr or '')
+		# close file handles if we opened them
+		try:
+			if sf:
+				sf.close()
+		except Exception:
+			pass
+		try:
+			if ef:
+				ef.close()
+		except Exception:
+			pass
 		# Also save an aggregated debug file with command, return code and a
 		# combined view of stdout/stderr for quick inspection.
 		try:
