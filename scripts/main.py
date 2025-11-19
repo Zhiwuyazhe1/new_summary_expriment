@@ -303,7 +303,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                 try:
                     print(f"Extracting reports from {reports_dir} -> {findings_dir}")
                     # call generate_intermediate which returns path to json
-                    extractor_mod.generate_intermediate(reports_dir, findings_dir, project_name=proj)
+                    # pass project_src so file paths in the generated JSON
+                    # are made relative to the project source tree
+                    extractor_mod.generate_intermediate(reports_dir, findings_dir, project_name=proj, project_root=project_src)
                 except Exception as e:
                     print(f"extractor failed for {proj}: {e}", file=sys.stderr)
 

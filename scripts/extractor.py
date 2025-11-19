@@ -313,7 +313,7 @@ def merge_reports(all_reports: List[Dict[str, List[Dict]]]) -> Dict[str, List[Di
   return merged
 
 
-def generate_intermediate(reports_path: str, out_dir: str, project_name: Optional[str] = None) -> str:
+def generate_intermediate(reports_path: str, out_dir: str, project_name: Optional[str] = None, project_root: Optional[str] = None) -> str:
   """Generate an intermediate JSON file from reports_path and write it to
   out_dir. Returns the path to the written JSON file.
   """
@@ -331,6 +331,31 @@ def generate_intermediate(reports_path: str, out_dir: str, project_name: Optiona
       plist_metadata = m
 
   merged = merge_reports(all_reports)
+
+  # If a project_root is provided, try to map absolute file paths to
+  # paths relative to that project root. This makes the JSON easier to
+  # compare across environments and aligns with the user's expectation
+  # of seeing project-internal paths like 'crypto/pkcs7/pk7_doit.c'.
+  if project_root:
+    mapped_reports: Dict[str, List[Dict]] = {}
+    for file_path, entries in merged.items():
+      mapped = make_relative_path(file_path, project_root)
+      mapped_reports.setdefault(mapped, []).extend(entries)
+
+    # deduplicate per-file entries (simple local dedupe)
+    deduped: Dict[str, List[Dict]] = {}
+    for fp, entries in mapped_reports.items():
+      seen_local: Set[Tuple[Optional[str], Optional[int], str]] = set()
+      out_entries: List[Dict] = []
+      for e in entries:
+        key = (e.get('checker'), e.get('line'), e.get('message'))
+        if key in seen_local:
+          continue
+        seen_local.add(key)
+        out_entries.append(e)
+      deduped[fp] = out_entries
+
+    merged = deduped
 
   # Try to read analysis_time.json if present in the same directory as
   # the reports_path (or the parent if a file was passed).
@@ -411,7 +436,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
   try:
     # We generate first, then if project_root provided we rewrite file paths
-    out_path = generate_intermediate(args.reports, args.outdir, args.project)
+    out_path = generate_intermediate(args.reports, args.outdir, args.project, args.project_root)
+
     # Now post-process the generated file to relativize paths if requested
     if args.project_root:
       try:
@@ -455,6 +481,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         logger.info('Relativized file paths using project root %s', args.project_root)
       except Exception:
         logger.exception('Failed to relativize paths using project root %s', args.project_root)
+
     print(out_path)
     return 0
   except Exception as e:
