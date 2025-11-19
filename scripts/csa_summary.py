@@ -20,9 +20,9 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import List, Set
+from typing import List, Set, Optional
 
-__all__ = ["find_functions_in_c_file", "build_clang_command", "run_analysis_for_function", "main"]
+__all__ = ["find_functions_in_c_file", "find_project_root", "build_clang_command", "run_analysis_for_function", "main"]
 
 DEFAULT_CLANG_BIN = "/bigdata/huawei-proj/zqj/llvm-15.0.4/build/bin/clang-15"
 
@@ -64,25 +64,34 @@ def find_functions_in_c_file(file_path: str) -> List[str]:
 	return result
 
 
-def build_clang_command(clang_bin: str, function_name: str, file_path: str, summary_dir: str, include_dirs: List[str] | None = None) -> List[str]:
-	"""构建 clang 分析命令的参数列表（适合传递给 subprocess.run）。"""
+def find_project_root(file_path: str) -> str:
+	"""从给定源文件向上寻找项目根目录的启发式方法。
+
+	搜索以下标记文件以判断项目根：.git, configure, Makefile, CMakeLists.txt, configure.ac
+	如果未找到，则返回源文件所在目录。
+	"""
+
+	cur = Path(file_path).resolve().parent
+	markers = {".git", "configure", "Makefile", "CMakeLists.txt", "configure.ac"}
+	for parent in [cur] + list(cur.parents):
+		try:
+			entries = {p.name for p in parent.iterdir()}
+		except PermissionError:
+			continue
+		if markers & entries:
+			return str(parent)
+	# fallback: directory containing the source file
+	return str(cur)
+
+
+def build_clang_command(clang_bin: str, function_name: str, file_path: str, summary_dir: str) -> List[str]:
+	"""构建 clang 分析命令的参数列表（适合传递给 subprocess.run）。
+
+	说明：不再显式注入 -I 头文件路径；运行前会切换到项目根目录以便 clang 在相对路径下寻找头文件。
+	"""
 
 	cmd = [clang_bin, "--analyze"]
 	# 保留 analyzer 的一些选项
-
-	# Ensure include dirs is a list
-	if include_dirs is None:
-		include_dirs = []
-
-	# Always include the directory of the source file itself to help find local headers
-	src_dir = os.path.dirname(os.path.abspath(file_path))
-	if src_dir and src_dir not in include_dirs:
-		include_dirs.insert(0, src_dir)
-
-	# Inject -I include directories
-	for d in include_dirs:
-		if d:
-			cmd += ["-I", d]
 
 	cmd += ["-Xanalyzer", "-analyzer-purge=none"]
 	cmd += ["-Xanalyzer", "-analyzer-checker=alpha.core.DumpSummary"]
@@ -94,23 +103,29 @@ def build_clang_command(clang_bin: str, function_name: str, file_path: str, summ
 	return cmd
 
 
-def run_analysis_for_function(clang_bin: str, function_name: str, file_path: str, summary_dir: str, dry_run: bool = False, include_dirs: List[str] | None = None) -> int:
+def run_analysis_for_function(clang_bin: str, function_name: str, file_path: str, summary_dir: str, dry_run: bool = False, project_root: Optional[str] = None) -> int:
 	"""对单个函数触发 clang 分析。返回子进程退出码（0 表示成功）。
 
 	该函数会确保 summary_dir 存在。
 	"""
 	Path(summary_dir).mkdir(parents=True, exist_ok=True)
 
-	cmd = build_clang_command(clang_bin, function_name, file_path, summary_dir, include_dirs=include_dirs)
+	# Determine project root: prefer explicit override, otherwise heuristically find it
+	if project_root:
+		proj_root = project_root
+	else:
+		proj_root = find_project_root(file_path)
+	cmd = build_clang_command(clang_bin, function_name, file_path, summary_dir)
 
 	logger.info("Running analysis for function '%s' in %s", function_name, file_path)
 	if dry_run:
+		logger.info("Dry run - project root: %s", proj_root)
 		logger.info("Dry run - command: %s", " ".join(cmd))
 		return 0
 
 	try:
-		# 运行外部命令并捕获输出；不将输出打印到屏幕以免污染日志，但在失败时显示 stderr
-		completed = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+		# 运行外部命令并捕获输出；在项目根目录下执行以便 clang 能用相对 include 路径查找头文件
+		completed = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=proj_root)
 	except FileNotFoundError as e:
 		logger.error("Clang binary not found: %s", clang_bin)
 		return 127
@@ -131,7 +146,9 @@ def main(argv: List[str] | None = None) -> int:
 	parser.add_argument("--summary-dir", dest="summary_dir", required=True, help="clang summary 输出目录")
 	parser.add_argument("--clang-bin", dest="clang_bin", default=DEFAULT_CLANG_BIN, help="clang 可执行文件路径")
 	parser.add_argument("--dry-run", dest="dry_run", action="store_true", help="不实际调用 clang，仅打印将要执行的命令")
-	parser.add_argument("--include-dir", dest="include_dirs", action="append", default=[], help="额外的头文件目录，传递给 clang 的 -I。可以多次指定。")
+	# Optional explicit project root: if provided, use this directory as cwd when running clang.
+	# Otherwise the script will heuristically locate the project root (searching for .git, Makefile, etc.)
+	parser.add_argument("--project-root", dest="project_root", help="可选：分析时使用的项目根目录（将切换到该目录运行 clang）")
 
 	args = parser.parse_args(argv)
 
@@ -139,7 +156,8 @@ def main(argv: List[str] | None = None) -> int:
 		if not args.file_path or not args.function_name:
 			parser.error("--file 和 --function 在 function 模式下均为必需")
 
-		rc = run_analysis_for_function(args.clang_bin, args.function_name, args.file_path, args.summary_dir, dry_run=args.dry_run, include_dirs=args.include_dirs)
+		rc = run_analysis_for_function(args.clang_bin, args.function_name, args.file_path, args.summary_dir, dry_run=args.dry_run, project_root=args.project_root)
+
 		return rc
 
 	# file 模式
@@ -154,7 +172,7 @@ def main(argv: List[str] | None = None) -> int:
 	# 依次调用
 	failed = []
 	for fn in funcs:
-		rc = run_analysis_for_function(args.clang_bin, fn, args.file_path, args.summary_dir, dry_run=args.dry_run, include_dirs=args.include_dirs)
+		rc = run_analysis_for_function(args.clang_bin, fn, args.file_path, args.summary_dir, dry_run=args.dry_run, project_root=args.project_root)
 		if rc != 0:
 			failed.append((fn, rc))
 
