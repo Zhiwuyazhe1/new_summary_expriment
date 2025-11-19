@@ -114,7 +114,7 @@ def main(argv: List[str] | None = None) -> int:
 	parser.add_argument("--file", dest="file_path", help="源文件路径（.c）")
 	parser.add_argument("--function", dest="function_name", help="目标函数名（在 function 模式下必需）")
 	parser.add_argument("--summary-dir", dest="summary_dir", required=True, help="clang summary 输出目录")
-	parser.add_argument("--clang-bin", dest="clang_bin", default=os.environ.get("CLANG_BIN", DEFAULT_CLANG_BIN), help="clang 可执行文件路径")
+	parser.add_argument("--clang-bin", dest="clang_bin", default=DEFAULT_CLANG_BIN, help="clang 可执行文件路径")
 	parser.add_argument("--dry-run", dest="dry_run", action="store_true", help="不实际调用 clang，仅打印将要执行的命令")
 
 	args = parser.parse_args(argv)
