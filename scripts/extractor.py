@@ -332,6 +332,39 @@ def generate_intermediate(reports_path: str, out_dir: str, project_name: Optiona
 
   merged = merge_reports(all_reports)
 
+  def make_relative_path(abs_path: str, project_root: Optional[str]) -> str:
+    """Return a path relative to project_root when sensible, else a
+    normalized absolute path. Kept local to avoid polluting module
+    namespace but must be defined before use.
+    """
+    if not project_root:
+      return abs_path.replace('\\', '/')
+
+    try:
+      abs_p = os.path.abspath(abs_path)
+      abs_root = os.path.abspath(project_root)
+      rel = os.path.relpath(abs_p, abs_root)
+      # If rel is outside (starts with ..) or remains absolute, fallback
+      if not rel.startswith('..') and not os.path.isabs(rel):
+        return rel.replace('\\', '/')
+    except Exception:
+      # Fall through to fallback strategies
+      pass
+
+    # Fallback: try to locate the project root basename in the path
+    try:
+      root_name = os.path.basename(os.path.abspath(project_root))
+      idx = abs_path.rfind(root_name)
+      if idx != -1:
+        candidate = abs_path[idx + len(root_name):].lstrip('/\\')
+        if candidate:
+          return candidate.replace('\\', '/')
+    except Exception:
+      pass
+
+    # As last resort return normalized absolute path
+    return abs_path.replace('\\', '/')
+
   # If a project_root is provided, try to map absolute file paths to
   # paths relative to that project root. This makes the JSON easier to
   # compare across environments and aligns with the user's expectation
@@ -368,34 +401,7 @@ def generate_intermediate(reports_path: str, out_dir: str, project_name: Optiona
     "plist_metadata": plist_metadata,
     "timing": timing_meta,
   }
-  def make_relative_path(abs_path: str, project_root: Optional[str]) -> str:
-    if not project_root:
-      return abs_path.replace('\\', '/')
-
-    try:
-      abs_p = os.path.abspath(abs_path)
-      abs_root = os.path.abspath(project_root)
-      rel = os.path.relpath(abs_p, abs_root)
-      # If rel is outside (starts with ..) or remains absolute, fallback
-      if not rel.startswith('..') and not os.path.isabs(rel):
-        return rel.replace('\\', '/')
-    except Exception:
-      # Fall through to fallback strategies
-      pass
-
-    # Fallback: try to locate the project root basename in the path
-    try:
-      root_name = os.path.basename(os.path.abspath(project_root))
-      idx = abs_path.rfind(root_name)
-      if idx != -1:
-        candidate = abs_path[idx + len(root_name):].lstrip('/\\')
-        if candidate:
-          return candidate.replace('\\', '/')
-    except Exception:
-      pass
-
-    # As last resort return normalized absolute path
-    return abs_path.replace('\\', '/')
+  
 
   # if a project_root was provided via CLI we'll set it later in caller
   payload = {
