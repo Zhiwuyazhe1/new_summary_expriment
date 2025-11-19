@@ -141,16 +141,41 @@ def main(argv: Optional[List[str]] = None) -> int:
     with open(cfg_path, 'r', encoding='utf-8') as f:
         cfg = json.load(f)
 
-    projects = cfg.get('projects', []) if isinstance(cfg, dict) else []
-
     # determine project subdir for mode (e.g. <projects_base>/groundtruth)
     projects_base = args.projects_base
     projects_base = os.path.join(projects_base, args.mode)
 
-    # If config.json did not define projects, enumerate immediate subdirectories
-    # under the selected projects_base/mode directory so we automatically
-    # discover projects (this matches the expectation: enter the mode
-    # subdirectory then enumerate projects).
+    # Determine list of projects to process. Support multiple config layouts:
+    #  - cfg["enabled_projects"]: explicit list of projects to run (preferred)
+    #  - cfg["projects"]: legacy explicit list
+    #  - cfg["disabled_projects"]: legacy list of disabled projects -> enumerate dir and filter
+    #  - otherwise: enumerate immediate subdirectories under projects_base
+    projects = []
+    if isinstance(cfg, dict):
+        if 'enabled_projects' in cfg:
+            projects = cfg.get('enabled_projects') or []
+        elif 'projects' in cfg:
+            projects = cfg.get('projects') or []
+        elif 'disabled_projects' in cfg:
+            disabled = set(cfg.get('disabled_projects') or [])
+            if os.path.isdir(projects_base):
+                try:
+                    entries = sorted([d for d in os.listdir(projects_base) if os.path.isdir(os.path.join(projects_base, d))])
+                    projects = [d for d in entries if d not in disabled]
+                    print(f"Discovered projects in {projects_base} (filtered disabled): {projects}")
+                except Exception as e:
+                    print(f"Failed to enumerate projects under {projects_base}: {e}")
+                    projects = []
+            else:
+                print(f"projects_base not found when applying disabled filter: {projects_base}")
+                projects = []
+        else:
+            projects = []
+    else:
+        projects = []
+
+    # If config.json did not define projects (and no enabled/disabled lists given),
+    # enumerate immediate subdirectories under the selected projects_base/mode directory.
     if not projects:
         if os.path.isdir(projects_base):
             try:

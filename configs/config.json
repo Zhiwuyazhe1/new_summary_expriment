@@ -1,5 +1,7 @@
 {
-  "disabled_projects": [],
+  "enabled_projects": [
+    "openssl"
+  ],
   "baseline": [
     {
       "sqlite3": [
@@ -7,10 +9,13 @@
     },
     {
       "openssl": [
+        "crypto/mem.c",
+        "crypto/malloc.c"
       ]
     },
     {
       "binutils": [
+        "libiberty/xmalloc.c"
       ]
     }
   ]

@@ -139,7 +139,7 @@ def write_detailed_json(out_dir: str, project: str, summary: Dict) -> str:
 	return out_path
 
 
-def write_csv_summary(out_dir: str, rows: Iterable[Tuple[str, int, int, int]]) -> str:
+def write_csv_summary(out_dir: str, rows: Iterable[Tuple[str, int, int, int, Optional[str]]]) -> str:
 	os.makedirs(out_dir, exist_ok=True)
 	date = datetime.utcnow().strftime("%Y%m%d")
 	out_path = os.path.join(out_dir, f"{date}.csv")
@@ -147,22 +147,28 @@ def write_csv_summary(out_dir: str, rows: Iterable[Tuple[str, int, int, int]]) -
 
 	with open(out_path, "w", encoding="utf-8", newline="") as cf:
 		writer = csv.writer(cf)
-		writer.writerow(["project_name", "tp", "fp", "fn", "precision", "recall"])
-		for project, tp, fp, fn in rows:
+		# Add analysis_time column (ISO UTC). Rows are expected as
+		# (project, tp, fp, fn, analysis_time) where analysis_time may be None.
+		writer.writerow(["project_name", "tp", "fp", "fn", "analysis_time", "precision", "recall"])
+		for project, tp, fp, fn, analysis_time in rows:
 			totals["tp"] += tp
 			totals["fp"] += fp
 			totals["fn"] += fn
 			prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
 			rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-			writer.writerow([project, tp, fp, fn, f"{prec:.4f}", f"{rec:.4f}"])
+			# Ensure we have an ISO timestamp; fallback to current time if missing
+			atime = analysis_time if analysis_time else (datetime.utcnow().isoformat() + "Z")
+			writer.writerow([project, tp, fp, fn, atime, f"{prec:.4f}", f"{rec:.4f}"])
 
-		# final aggregate row
-		ttp = totals["tp"]
-		tfp = totals["fp"]
-		tfn = totals["fn"]
-		tprec = ttp / (ttp + tfp) if (ttp + tfp) > 0 else 0.0
-		trec = ttp / (ttp + tfn) if (ttp + tfn) > 0 else 0.0
-		writer.writerow(["all", ttp, tfp, tfn, f"{tprec:.4f}", f"{trec:.4f}"])
+	# final aggregate row
+	ttp = totals["tp"]
+	tfp = totals["fp"]
+	tfn = totals["fn"]
+	tprec = ttp / (ttp + tfp) if (ttp + tfp) > 0 else 0.0
+	trec = ttp / (ttp + tfn) if (ttp + tfn) > 0 else 0.0
+	# Use current time for aggregate row
+	agg_time = datetime.utcnow().isoformat() + "Z"
+	writer.writerow(["all", ttp, tfp, tfn, agg_time, f"{tprec:.4f}", f"{trec:.4f}"])
 
 	return out_path
 
@@ -224,7 +230,30 @@ def main(argv: Optional[List[str]] = None) -> int:
 			out_json = write_detailed_json(results_dir, project, summary)
 			written_files.append(out_json)
 			s = summary.get("summary", {})
-			rows.append((project, int(s.get("tp", 0)), int(s.get("fp", 0)), int(s.get("fn", 0))))
+			# Prefer analysis timing from the candidate intermediate payload
+			# written by extractor: payload.metadata.timing.{end_timestamp,start_timestamp}
+			analysis_time = None
+			try:
+				timing = None
+				if isinstance(cmp_payload, dict):
+					timing = cmp_payload.get("metadata", {}).get("timing", {})
+				if timing and isinstance(timing, dict):
+					end_ts = timing.get("end_timestamp") or timing.get("end_time")
+					start_ts = timing.get("start_timestamp") or timing.get("start_time")
+					chosen = end_ts or start_ts
+					if isinstance(chosen, (int, float)):
+						analysis_time = datetime.utcfromtimestamp(float(chosen)).isoformat() + "Z"
+					elif isinstance(chosen, str) and chosen:
+						# already a string; use as-is
+						analysis_time = chosen
+			except Exception:
+				analysis_time = None
+
+			# Fallbacks: comparator-generated timestamp in summary, then current time
+			if not analysis_time:
+				analysis_time = summary.get("generated_at") or (datetime.utcnow().isoformat() + "Z")
+
+			rows.append((project, int(s.get("tp", 0)), int(s.get("fp", 0)), int(s.get("fn", 0)), analysis_time))
 			logger.info("Wrote detailed comparison for %s -> %s", project, out_json)
 		except Exception:
 			logger.exception("Failed to process groundtruth file %s", g)
