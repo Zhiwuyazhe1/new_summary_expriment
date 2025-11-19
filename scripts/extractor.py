@@ -112,13 +112,73 @@ def extract_metadata_from_report_dir(report_dir: str) -> Dict:
   written by `codechecker_driver.py` and return a dict with any found
   values. If the file is missing, return an empty dict.
   """
-  meta_path = os.path.join(report_dir, "analysis_time.json")
-  if os.path.isfile(meta_path):
-    try:
-      with open(meta_path, "r", encoding="utf-8") as mf:
-        return json.load(mf)
-    except Exception:
-      logger.exception("Failed to read analysis_time.json at %s", meta_path)
+  # Look for analysis_time.json in several sensible locations:
+  #  - directly under report_dir
+  #  - in any immediate subdirectory (CodeChecker sometimes nests outputs)
+  #  - in parent directories (caller might pass a subpath)
+  candidates: List[str] = []
+
+  # direct path
+  candidates.append(os.path.join(report_dir, "analysis_time.json"))
+
+  # immediate children
+  try:
+    if os.path.isdir(report_dir):
+      for name in os.listdir(report_dir):
+        child = os.path.join(report_dir, name)
+        if os.path.isdir(child):
+          candidates.append(os.path.join(child, "analysis_time.json"))
+  except Exception:
+    # ignore listing errors
+    pass
+
+  # search recursively but limit depth to avoid long scans
+  try:
+    for root, dirs, files in os.walk(report_dir):
+      # limit search depth by stopping when path depth exceeds report_dir + 2
+      rel = os.path.relpath(root, report_dir)
+      # rel == '.' for root
+      if rel != '.' and rel.count(os.sep) > 2:
+        # don't recurse deeper
+        dirs[:] = []
+        continue
+      if 'analysis_time.json' in files:
+        candidates.append(os.path.join(root, 'analysis_time.json'))
+  except Exception:
+    pass
+
+  # also check up to two parent dirs
+  try:
+    cur = report_dir
+    for _ in range(2):
+      cur = os.path.dirname(cur)
+      if not cur:
+        break
+      candidates.append(os.path.join(cur, 'analysis_time.json'))
+  except Exception:
+    pass
+
+  seen = set()
+  for meta_path in candidates:
+    if not meta_path or meta_path in seen:
+      continue
+    seen.add(meta_path)
+    if os.path.isfile(meta_path):
+      try:
+        with open(meta_path, 'r', encoding='utf-8') as mf:
+          data = json.load(mf)
+        # We normalise the timing metadata to ensure a predictable shape
+        timing: Dict = {}
+        if isinstance(data, dict):
+          # copy known keys if present
+          for k in ('start_timestamp', 'end_timestamp', 'elapsed_seconds'):
+            if k in data:
+              timing[k] = data[k]
+        if timing:
+          return timing
+      except Exception:
+        logger.exception('Failed to read analysis_time.json at %s', meta_path)
+
   return {}
 
 
