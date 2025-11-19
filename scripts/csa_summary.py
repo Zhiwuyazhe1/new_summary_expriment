@@ -24,7 +24,7 @@ from typing import List, Set, Optional
 
 __all__ = ["find_functions_in_c_file", "find_project_root", "build_clang_command", "run_analysis_for_function", "main"]
 
-DEFAULT_CLANG_BIN = "/bigdata/huawei-proj/zqj/llvm-15.0.4/build/bin/clang-15"
+DEFAULT_CLANG_BIN = "/bigdata/huawei-proj/zqj/llvm-15.0.4/build/bin/clang-check"
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
