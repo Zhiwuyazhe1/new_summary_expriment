@@ -143,7 +143,12 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # determine project subdir for mode (e.g. <projects_base>/groundtruth)
     projects_base = args.projects_base
-    projects_base = os.path.join(projects_base, args.mode)
+    # Special-case: when running in 'method' mode we want to use the
+    # baseline projects tree (projects/baseline) as the source projects.
+    # This keeps method runs using the same source projects as baseline
+    # while still naming outputs under the 'method' mode.
+    mode_for_projects = 'baseline' if args.mode == 'method' else args.mode
+    projects_base = os.path.join(projects_base, mode_for_projects)
 
     # Determine list of projects to process. Support multiple config layouts:
     #  - cfg["enabled_projects"]: explicit list of projects to run (preferred)
