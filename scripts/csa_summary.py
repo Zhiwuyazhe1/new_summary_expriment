@@ -24,7 +24,7 @@ from typing import List, Set, Optional
 
 __all__ = ["find_functions_in_c_file", "find_project_root", "build_clang_command", "run_analysis_for_function", "main"]
 
-DEFAULT_CLANG_BIN = "/bigdata/huawei-proj/zqj/llvm-15.0.4/build/bin/clang-check"
+DEFAULT_CLANG_BIN = "/bigdata/huawei-proj/zqj/llvm-15.0.4/build/bin/clang-15"
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -96,13 +96,13 @@ def build_clang_command(clang_bin: str, function_name: str, file_path: str, summ
 
 	# Start with analyzer invocation and the source file to analyze
 	# Use single-dash -analyze to match the common invocation form (clang-check examples use -analyze)
-	cmd: List[str] = [clang_bin, "-analyze", file_path, "--"]
+	cmd: List[str] = [clang_bin, "--analyze"]
 
 	# Append analyzer options as -Xanalyzer <arg> pairs
 	cmd += ["-Xanalyzer", "-analyzer-purge=none"]
 	cmd += ["-Xanalyzer", "-analyzer-checker=alpha.core.DumpSummary"]
 	# analyze-function needs to be passed through -Xanalyzer; follow with the function name
-	cmd += ["-Xanalyzer", "-analyze-function", "-Xanalyzer", function_name]
+	cmd += ["-Xanalyzer", "-analyze-function", "-Xanalyzer", function_name, file_path]
 	cmd += ["-Xanalyzer", "-analyzer-config", "-Xanalyzer", "clear-overlap-offset=false"]
 	cmd += ["-Xanalyzer", "-analyzer-config", "-Xanalyzer", f"summary-dir={summary_dir}"]
 
