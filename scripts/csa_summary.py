@@ -64,11 +64,26 @@ def find_functions_in_c_file(file_path: str) -> List[str]:
 	return result
 
 
-def build_clang_command(clang_bin: str, function_name: str, file_path: str, summary_dir: str) -> List[str]:
+def build_clang_command(clang_bin: str, function_name: str, file_path: str, summary_dir: str, include_dirs: List[str] | None = None) -> List[str]:
 	"""构建 clang 分析命令的参数列表（适合传递给 subprocess.run）。"""
 
 	cmd = [clang_bin, "--analyze"]
 	# 保留 analyzer 的一些选项
+
+	# Ensure include dirs is a list
+	if include_dirs is None:
+		include_dirs = []
+
+	# Always include the directory of the source file itself to help find local headers
+	src_dir = os.path.dirname(os.path.abspath(file_path))
+	if src_dir and src_dir not in include_dirs:
+		include_dirs.insert(0, src_dir)
+
+	# Inject -I include directories
+	for d in include_dirs:
+		if d:
+			cmd += ["-I", d]
+
 	cmd += ["-Xanalyzer", "-analyzer-purge=none"]
 	cmd += ["-Xanalyzer", "-analyzer-checker=alpha.core.DumpSummary"]
 	cmd += ["-Xanalyzer", "-analyze-function"]
@@ -79,14 +94,14 @@ def build_clang_command(clang_bin: str, function_name: str, file_path: str, summ
 	return cmd
 
 
-def run_analysis_for_function(clang_bin: str, function_name: str, file_path: str, summary_dir: str, dry_run: bool = False) -> int:
+def run_analysis_for_function(clang_bin: str, function_name: str, file_path: str, summary_dir: str, dry_run: bool = False, include_dirs: List[str] | None = None) -> int:
 	"""对单个函数触发 clang 分析。返回子进程退出码（0 表示成功）。
 
 	该函数会确保 summary_dir 存在。
 	"""
 	Path(summary_dir).mkdir(parents=True, exist_ok=True)
 
-	cmd = build_clang_command(clang_bin, function_name, file_path, summary_dir)
+	cmd = build_clang_command(clang_bin, function_name, file_path, summary_dir, include_dirs=include_dirs)
 
 	logger.info("Running analysis for function '%s' in %s", function_name, file_path)
 	if dry_run:
@@ -116,6 +131,7 @@ def main(argv: List[str] | None = None) -> int:
 	parser.add_argument("--summary-dir", dest="summary_dir", required=True, help="clang summary 输出目录")
 	parser.add_argument("--clang-bin", dest="clang_bin", default=DEFAULT_CLANG_BIN, help="clang 可执行文件路径")
 	parser.add_argument("--dry-run", dest="dry_run", action="store_true", help="不实际调用 clang，仅打印将要执行的命令")
+	parser.add_argument("--include-dir", dest="include_dirs", action="append", default=[], help="额外的头文件目录，传递给 clang 的 -I。可以多次指定。")
 
 	args = parser.parse_args(argv)
 
@@ -123,7 +139,7 @@ def main(argv: List[str] | None = None) -> int:
 		if not args.file_path or not args.function_name:
 			parser.error("--file 和 --function 在 function 模式下均为必需")
 
-		rc = run_analysis_for_function(args.clang_bin, args.function_name, args.file_path, args.summary_dir, dry_run=args.dry_run)
+		rc = run_analysis_for_function(args.clang_bin, args.function_name, args.file_path, args.summary_dir, dry_run=args.dry_run, include_dirs=args.include_dirs)
 		return rc
 
 	# file 模式
@@ -138,7 +154,7 @@ def main(argv: List[str] | None = None) -> int:
 	# 依次调用
 	failed = []
 	for fn in funcs:
-		rc = run_analysis_for_function(args.clang_bin, fn, args.file_path, args.summary_dir, dry_run=args.dry_run)
+		rc = run_analysis_for_function(args.clang_bin, fn, args.file_path, args.summary_dir, dry_run=args.dry_run, include_dirs=args.include_dirs)
 		if rc != 0:
 			failed.append((fn, rc))
 
