@@ -205,19 +205,36 @@ def run_analysis_for_function(clang_bin: str, function_name: str, file_path: str
 		proj_root = find_project_root(file_path)
 	# If compile_commands.json provided, try to extract include/macros from it for this file
 	extra_flags: List[str] = []
+	# If compile_commands.json provided, or if not provided attempt to auto-locate it under project root,
+	# try to extract include/macros from it for this file
+	ccp: Optional[Path] = None
 	if compile_commands:
 		ccp = Path(compile_commands)
+	else:
+		# try common locations under project root
+		cand1 = Path(proj_root) / "compile_commands.json"
+		cand2 = Path(proj_root) / "build" / "compile_commands.json"
+		if cand1.exists():
+			ccp = cand1
+		elif cand2.exists():
+			ccp = cand2
+
+	if ccp:
 		if ccp.exists():
 			entries = load_compile_commands(ccp)
 			entry = find_compile_commands_entry(entries, file_path)
 			if entry:
 				tokens = tokenize_command(entry)
 				extra_flags = extract_relevant_flags(tokens, file_path)
-				logger.info("Extracted %d flags from %s", len(extra_flags), ccp)
+				logger.info("Found compile_commands entry: %s", ccp)
+				logger.info("Compile command tokens: %s", " ".join(tokens))
+				logger.info("Extracted %d flags from %s: %s", len(extra_flags), ccp, " ".join(extra_flags))
 			else:
 				logger.info("No compile_commands entry matched for %s in %s", file_path, ccp)
 		else:
 			logger.info("compile_commands.json not found at %s", ccp)
+	else:
+		logger.debug("No compile_commands.json provided and none found under project root %s", proj_root)
 
 	cmd = build_clang_command(clang_bin, function_name, file_path, summary_dir, extra_flags=extra_flags)
 
