@@ -102,12 +102,47 @@ def load_compile_commands(path: Path) -> List[dict]:
 def find_compile_commands_entry(entries: List[dict], src_file: str) -> Optional[dict]:
 	# try exact match first, then basename match
 	src_path = Path(src_file)
+	# Normalize target absolute path for comparison
+	try:
+		tgt_abs = src_path.resolve()
+	except Exception:
+		tgt_abs = src_path
+
+	# 1) exact resolved path or via entry 'directory'
 	for e in entries:
-		if 'file' in e and Path(e['file']).resolve() == src_path.resolve():
+		if 'file' not in e:
+			continue
+		entry_file = Path(e['file'])
+		# if compile_commands provides directory, combine
+		dir_field = e.get('directory')
+		if dir_field:
+			try:
+				entry_full = (Path(dir_field) / entry_file).resolve()
+			except Exception:
+				entry_full = Path(dir_field) / entry_file
+			if entry_full == tgt_abs:
+				return e
+		# try resolving entry file directly
+		try:
+			if entry_file.resolve() == tgt_abs:
+				return e
+		except Exception:
+			pass
+
+	# 2) try endswith match of the path (useful if compile_commands stores relative paths)
+	for e in entries:
+		if 'file' not in e:
+			continue
+		entry_file_str = str(e['file']).replace('\\', '/')
+		tgt_str = str(src_path.as_posix())
+		if tgt_str.endswith(entry_file_str) or entry_file_str.endswith(src_path.name):
 			return e
+
+	# 3) basename match as last resort
 	for e in entries:
 		if 'file' in e and Path(e['file']).name == src_path.name:
 			return e
+
 	return None
 
 
