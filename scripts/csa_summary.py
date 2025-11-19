@@ -14,6 +14,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import shlex
 import logging
 import os
 import re
@@ -84,7 +86,80 @@ def find_project_root(file_path: str) -> str:
 	return str(cur)
 
 
-def build_clang_command(clang_bin: str, function_name: str, file_path: str, summary_dir: str) -> List[str]:
+def load_compile_commands(path: Path) -> List[dict]:
+	try:
+		with path.open('r', encoding='utf-8') as f:
+			data = json.load(f)
+	except Exception:
+		logger.warning("Failed to read or parse compile_commands.json at %s", path)
+		return []
+	if not isinstance(data, list):
+		logger.warning("compile_commands.json does not contain a list: %s", path)
+		return []
+	return data
+
+
+def find_compile_commands_entry(entries: List[dict], src_file: str) -> Optional[dict]:
+	# try exact match first, then basename match
+	src_path = Path(src_file)
+	for e in entries:
+		if 'file' in e and Path(e['file']).resolve() == src_path.resolve():
+			return e
+	for e in entries:
+		if 'file' in e and Path(e['file']).name == src_path.name:
+			return e
+	return None
+
+
+def tokenize_command(entry: dict) -> List[str]:
+	if 'arguments' in entry and isinstance(entry['arguments'], list):
+		return [str(x) for x in entry['arguments']]
+	if 'command' in entry and isinstance(entry['command'], str):
+		try:
+			return shlex.split(entry['command'], posix=True)
+		except Exception:
+			return entry['command'].split()
+	return []
+
+
+def extract_relevant_flags(tokens: List[str], src_file: str) -> List[str]:
+	keep: List[str] = []
+	i = 0
+	while i < len(tokens):
+		t = tokens[i]
+		# skip compiler binary and -c, -o
+		if i == 0 and (Path(t).name.lower().startswith('clang') or Path(t).name.lower().startswith('gcc') or Path(t).endswith('.exe')):
+			i += 1
+			continue
+		if t == '-c':
+			i += 1
+			continue
+		if t == '-o':
+			i += 2
+			continue
+
+		# skip the source file token if present
+		if Path(t).as_posix() == Path(src_file).as_posix() or Path(t).name == Path(src_file).name:
+			i += 1
+			continue
+
+		if t.startswith('-I') or t.startswith('-isystem') or t.startswith('-iquote') or t.startswith('-D') or t.startswith('-std'):
+			keep.append(t)
+			i += 1
+			continue
+
+		if t in ('-I', '-isystem', '-iquote', '-idirafter', '-iprefix'):
+			if i + 1 < len(tokens):
+				keep.append(t)
+				keep.append(tokens[i + 1])
+				i += 2
+				continue
+
+		i += 1
+	return keep
+
+
+def build_clang_command(clang_bin: str, function_name: str, file_path: str, summary_dir: str, extra_flags: Optional[List[str]] = None) -> List[str]:
 	"""构建 clang 分析命令的参数列表（适合传递给 subprocess.run）。
 
 	说明：不再显式注入 -I 头文件路径；运行前会切换到项目根目录以便 clang 在相对路径下寻找头文件。
@@ -94,22 +169,29 @@ def build_clang_command(clang_bin: str, function_name: str, file_path: str, summ
 	这样 clang-check/clang 可以正确识别要分析的源文件与后续的 -Xanalyzer 参数。
 	"""
 
-	# Start with analyzer invocation and the source file to analyze
-	# Use single-dash -analyze to match the common invocation form (clang-check examples use -analyze)
+	# Start with analyzer invocation and optionally include any extracted compile flags
 	cmd: List[str] = [clang_bin, "--analyze"]
+
+	# place extra flags (includes/macros) right after --analyze so clang can preprocess correctly
+	if extra_flags:
+		cmd += extra_flags
 
 	# Append analyzer options as -Xanalyzer <arg> pairs
 	cmd += ["-Xanalyzer", "-analyzer-purge=none"]
 	cmd += ["-Xanalyzer", "-analyzer-checker=alpha.core.DumpSummary"]
 	# analyze-function needs to be passed through -Xanalyzer; follow with the function name
-	cmd += ["-Xanalyzer", "-analyze-function", "-Xanalyzer", function_name, file_path]
+	cmd += ["-Xanalyzer", "-analyze-function", "-Xanalyzer", function_name]
+
 	cmd += ["-Xanalyzer", "-analyzer-config", "-Xanalyzer", "clear-overlap-offset=false"]
 	cmd += ["-Xanalyzer", "-analyzer-config", "-Xanalyzer", f"summary-dir={summary_dir}"]
+
+	# finally append the source file to analyze
+	cmd += [file_path]
 
 	return cmd
 
 
-def run_analysis_for_function(clang_bin: str, function_name: str, file_path: str, summary_dir: str, dry_run: bool = False, project_root: Optional[str] = None) -> int:
+def run_analysis_for_function(clang_bin: str, function_name: str, file_path: str, summary_dir: str, dry_run: bool = False, project_root: Optional[str] = None, compile_commands: Optional[str] = None) -> int:
 	"""对单个函数触发 clang 分析。返回子进程退出码（0 表示成功）。
 
 	该函数会确保 summary_dir 存在。
@@ -121,7 +203,23 @@ def run_analysis_for_function(clang_bin: str, function_name: str, file_path: str
 		proj_root = project_root
 	else:
 		proj_root = find_project_root(file_path)
-	cmd = build_clang_command(clang_bin, function_name, file_path, summary_dir)
+	# If compile_commands.json provided, try to extract include/macros from it for this file
+	extra_flags: List[str] = []
+	if compile_commands:
+		ccp = Path(compile_commands)
+		if ccp.exists():
+			entries = load_compile_commands(ccp)
+			entry = find_compile_commands_entry(entries, file_path)
+			if entry:
+				tokens = tokenize_command(entry)
+				extra_flags = extract_relevant_flags(tokens, file_path)
+				logger.info("Extracted %d flags from %s", len(extra_flags), ccp)
+			else:
+				logger.info("No compile_commands entry matched for %s in %s", file_path, ccp)
+		else:
+			logger.info("compile_commands.json not found at %s", ccp)
+
+	cmd = build_clang_command(clang_bin, function_name, file_path, summary_dir, extra_flags=extra_flags)
 
 	logger.info("Running analysis for function '%s' in %s", function_name, file_path)
 	if dry_run:
@@ -155,6 +253,7 @@ def main(argv: List[str] | None = None) -> int:
 	# Optional explicit project root: if provided, use this directory as cwd when running clang.
 	# Otherwise the script will heuristically locate the project root (searching for .git, Makefile, etc.)
 	parser.add_argument("--project-root", dest="project_root", help="可选：分析时使用的项目根目录（将切换到该目录运行 clang）")
+	parser.add_argument("--compile-commands", dest="compile_commands", help="可选：compile_commands.json 路径，用于自动提取 -I/-D 标志以补充 clang 的预处理路径")
 
 	args = parser.parse_args(argv)
 
@@ -162,7 +261,7 @@ def main(argv: List[str] | None = None) -> int:
 		if not args.file_path or not args.function_name:
 			parser.error("--file 和 --function 在 function 模式下均为必需")
 
-		rc = run_analysis_for_function(args.clang_bin, args.function_name, args.file_path, args.summary_dir, dry_run=args.dry_run, project_root=args.project_root)
+		rc = run_analysis_for_function(args.clang_bin, args.function_name, args.file_path, args.summary_dir, dry_run=args.dry_run, project_root=args.project_root, compile_commands=args.compile_commands)
 
 		return rc
 
@@ -178,7 +277,7 @@ def main(argv: List[str] | None = None) -> int:
 	# 依次调用
 	failed = []
 	for fn in funcs:
-		rc = run_analysis_for_function(args.clang_bin, fn, args.file_path, args.summary_dir, dry_run=args.dry_run, project_root=args.project_root)
+		rc = run_analysis_for_function(args.clang_bin, fn, args.file_path, args.summary_dir, dry_run=args.dry_run, project_root=args.project_root, compile_commands=args.compile_commands)
 		if rc != 0:
 			failed.append((fn, rc))
 
