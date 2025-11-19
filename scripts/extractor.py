@@ -118,8 +118,9 @@ def extract_metadata_from_report_dir(report_dir: str) -> Dict:
   #  - in parent directories (caller might pass a subpath)
   candidates: List[str] = []
 
-  # direct path
+  # direct path: prefer analysis_time.json but also consider metadata.json
   candidates.append(os.path.join(report_dir, "analysis_time.json"))
+  candidates.append(os.path.join(report_dir, "metadata.json"))
 
   # immediate children
   try:
@@ -167,17 +168,121 @@ def extract_metadata_from_report_dir(report_dir: str) -> Dict:
       try:
         with open(meta_path, 'r', encoding='utf-8') as mf:
           data = json.load(mf)
-        # We normalise the timing metadata to ensure a predictable shape
-        timing: Dict = {}
-        if isinstance(data, dict):
-          # copy known keys if present
-          for k in ('start_timestamp', 'end_timestamp', 'elapsed_seconds'):
-            if k in data:
-              timing[k] = data[k]
-        if timing:
+
+        # 1) If the file already contains elapsed_seconds use it directly
+        if isinstance(data, dict) and 'elapsed_seconds' in data:
+          timing = {
+            'start_timestamp': data.get('start_timestamp'),
+            'end_timestamp': data.get('end_timestamp'),
+            'elapsed_seconds': float(data.get('elapsed_seconds')) if data.get('elapsed_seconds') is not None else None,
+          }
           return timing
+
+        # 2) Some toolings write timestamps under a `timestamps` key (e.g. metadata.json)
+        def _find_timestamps(obj):
+          # recursively search for a dict that contains a `timestamps` mapping
+          if isinstance(obj, dict):
+            if 'timestamps' in obj and isinstance(obj['timestamps'], dict):
+              t = obj['timestamps']
+              if 'begin' in t and 'end' in t:
+                return (t.get('begin'), t.get('end'))
+            # also allow top-level keys named begin/end
+            if 'begin' in obj and 'end' in obj:
+              return (obj.get('begin'), obj.get('end'))
+            for v in obj.values():
+              res = _find_timestamps(v)
+              if res:
+                return res
+          elif isinstance(obj, list):
+            for item in obj:
+              res = _find_timestamps(item)
+              if res:
+                return res
+          return None
+
+        ts = _find_timestamps(data)
+        if ts:
+          try:
+            begin, end = float(ts[0]), float(ts[1])
+            elapsed = end - begin
+            timing = {
+              'start_timestamp': begin,
+              'end_timestamp': end,
+              'elapsed_seconds': float(elapsed),
+            }
+            return timing
+          except Exception:
+            # fallthrough to other heuristics
+            pass
+
+        # 3) As a last attempt, if data is a dict with nested keys like
+        #    {"analysis": {"timing": {...}}} try to locate elapsed_seconds
+        def _find_elapsed(obj):
+          if isinstance(obj, dict):
+            if 'elapsed_seconds' in obj:
+              return obj.get('elapsed_seconds')
+            for v in obj.values():
+              res = _find_elapsed(v)
+              if res is not None:
+                return res
+          elif isinstance(obj, list):
+            for item in obj:
+              res = _find_elapsed(item)
+              if res is not None:
+                return res
+          return None
+
+        elapsed_val = _find_elapsed(data)
+        if elapsed_val is not None:
+          try:
+            ev = float(elapsed_val)
+            return {'elapsed_seconds': ev}
+          except Exception:
+            pass
+
       except Exception:
-        logger.exception('Failed to read analysis_time.json at %s', meta_path)
+        logger.exception('Failed to read timing metadata at %s', meta_path)
+
+  return {}
+
+
+  # Fallback: try to parse elapsed seconds from common debug/log files
+  # produced by codechecker_driver (analysis_debug.txt, codechecker_stdout.txt, codechecker_stderr.txt)
+  debug_candidates = [
+    os.path.join(report_dir, 'analysis_debug.txt'),
+    os.path.join(report_dir, 'codechecker_stdout.txt'),
+    os.path.join(report_dir, 'codechecker_stderr.txt'),
+  ]
+  # also check immediate subdirs for debug files
+  try:
+    if os.path.isdir(report_dir):
+      for name in os.listdir(report_dir):
+        child = os.path.join(report_dir, name)
+        if os.path.isdir(child):
+          debug_candidates.append(os.path.join(child, 'analysis_debug.txt'))
+          debug_candidates.append(os.path.join(child, 'codechecker_stdout.txt'))
+          debug_candidates.append(os.path.join(child, 'codechecker_stderr.txt'))
+  except Exception:
+    pass
+
+  import re
+  elapsed_re = re.compile(r'Elapsed seconds:\s*([0-9]+(?:\.[0-9]+)?)', re.IGNORECASE)
+  for dpath in debug_candidates:
+    try:
+      if not dpath or not os.path.isfile(dpath):
+        continue
+      with open(dpath, 'r', encoding='utf-8', errors='ignore') as df:
+        for line in df:
+          m = elapsed_re.search(line)
+          if m:
+            try:
+              val = float(m.group(1))
+              return {'elapsed_seconds': val}
+            except Exception:
+              continue
+    except Exception:
+      # non-fatal; continue to next candidate
+      continue
 
   return {}
 
