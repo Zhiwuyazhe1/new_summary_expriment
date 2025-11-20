@@ -48,7 +48,11 @@ def _write_temp_saargs_file(summary_dir: str) -> str:
         "-Xanalyzer clear-overlap-offset=true\n"
         "-Xanalyzer -analyzer-config\n"
         f"-Xanalyzer summary-dir={summary_dir_expanded}\n"
-        "-Xanalyzer -analyzer-max-loop -Xanalyzer 8"
+        "-Xanalyzer -analyzer-max-loop -Xanalyzer 8\n"
+        "-Xanalyzer -analyzer-config\n"
+        "-Xanalyzer mode=deep\n"
+        "-Xanalyzer -analyzer-config\n"
+        "-Xanalyzer widen-loops=true"
     )
 
     tmp = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".saargs", encoding="utf-8")
