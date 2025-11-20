@@ -300,6 +300,15 @@ def main(argv: Optional[List[str]] = None) -> int:
                 except Exception as e:
                     print(f"Failed to write temp saargs file: {e}", file=sys.stderr)
                     temp_saargs_path = None
+            # If we're doing a dry-run (not actually executing CodeChecker), print
+            # the contents of the temporary saargs file to help debugging.
+            if temp_saargs_path and not args.execute:
+                try:
+                    with open(temp_saargs_path, 'r', encoding='utf-8') as _f:
+                        _saargs_contents = _f.read()
+                    print(f"DRY RUN: temporary saargs file at {temp_saargs_path} contents:\n{_saargs_contents}")
+                except Exception as e:
+                    print(f"Unable to read temp saargs file for debug output: {e}", file=sys.stderr)
 
         try:
             # run codechecker
