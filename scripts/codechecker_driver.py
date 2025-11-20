@@ -133,10 +133,11 @@ def run_codechecker(
 					pass
 				# Print to console only when verbose is requested
 				if verbose:
+					# Use flush=True so output appears on the terminal immediately
 					if is_stdout:
-						print(line, end='')
+						print(line, end='', flush=True)
 					else:
-						print(line, end='', file=sys.stderr)
+						print(line, end='', file=sys.stderr, flush=True)
 		finally:
 			try:
 				pipe.close()
