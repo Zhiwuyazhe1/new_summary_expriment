@@ -37,17 +37,26 @@ except Exception:
     import compile as compile_mod
 
 
-def _write_temp_saargs_file(summary_dir: str, widen_loops: bool = True) -> str:
-    """Create a temporary saargs file pointing analyzer to `summary_dir`.
+def _write_temp_saargs_file(summary_dir: str, widen_loops: bool = True, include_summary: bool = True) -> str:
+    """Create a temporary saargs file.
+
+    If include_summary is True the file will include a summary-dir line
+    pointing to `summary_dir`. Otherwise the summary-dir line is omitted
+    but other analyzer options are still written.
 
     Returns the absolute path to the temporary file. Caller should remove it.
     """
     summary_dir_expanded = os.path.abspath(summary_dir)
+    # Base analyzer options
     contents = (
         "-Xanalyzer -analyzer-config\n"
         "-Xanalyzer clear-overlap-offset=true\n"
         "-Xanalyzer -analyzer-config\n"
-        f"-Xanalyzer summary-dir={summary_dir_expanded}\n"
+    )
+    # Optionally include the summary-dir directive
+    if include_summary:
+        contents += f"-Xanalyzer summary-dir={summary_dir_expanded}\n"
+    contents += (
         "-Xanalyzer -analyzer-max-loop -Xanalyzer 8\n"
         "-Xanalyzer -analyzer-config\n"
         "-Xanalyzer mode=deep"
@@ -289,14 +298,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         # point the analyzer at any summary directory.
         summary_dir_for_proj = _resolve_summary_dir(args.summaries_base, args.summary, proj, args.null_summary_dir)
         temp_saargs_path = None
-        # Only create and pass an saargs file when running CodeChecker and
-        # when the selected mode is 'method' (which represents candidate runs
-        # that may use summaries). groundtruth/baseline modes ignore summaries.
-        if 'codechecker' in modules and args.summary != 'none' and args.mode == 'method':
-            # create temp saargs file pointing to chosen summary dir
+        # Always create a temp saargs file for CodeChecker runs so the
+        # analyzer receives consistent settings. Only include the
+        # summary-dir option when running in 'method' mode and a summary
+        # source other than 'none' was selected.
+        if 'codechecker' in modules:
             try:
-                # args.widen_loops is a boolean flag (True if --widen-loops was provided)
-                temp_saargs_path = _write_temp_saargs_file(summary_dir_for_proj, widen_loops=bool(args.widen_loops))
+                include_summary = (args.mode == 'method' and args.summary != 'none')
+                temp_saargs_path = _write_temp_saargs_file(summary_dir_for_proj, widen_loops=bool(args.widen_loops), include_summary=include_summary)
             except Exception as e:
                 print(f"Failed to write temp saargs file: {e}", file=sys.stderr)
                 temp_saargs_path = None
