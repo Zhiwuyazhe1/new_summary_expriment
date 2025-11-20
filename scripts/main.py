@@ -283,17 +283,23 @@ def main(argv: Optional[List[str]] = None) -> int:
             except Exception as e:
                 print(f"compile step failed for {proj}: {e}", file=sys.stderr)
 
-        # prepare summary dir selection and temp saargs
-        summary_dir_for_proj = _resolve_summary_dir(args.summaries_base, args.summary, proj, args.null_summary_dir)
-        temp_saargs_path = None
-        if 'codechecker' in modules and args.summary != 'none':
-            # create temp saargs file pointing to chosen summary dir
-            try:
-                # args.widen_loops is a boolean flag (True if --widen-loops was provided)
-                temp_saargs_path = _write_temp_saargs_file(summary_dir_for_proj, widen_loops=bool(args.widen_loops))
-            except Exception as e:
-                print(f"Failed to write temp saargs file: {e}", file=sys.stderr)
-                temp_saargs_path = None
+            # prepare summary dir selection and temp saargs
+            # Note: summaries are only used for the 'method' mode. For
+            # 'groundtruth' and 'baseline' modes we intentionally do not
+            # point the analyzer at any summary directory.
+            summary_dir_for_proj = _resolve_summary_dir(args.summaries_base, args.summary, proj, args.null_summary_dir)
+            temp_saargs_path = None
+            # Only create and pass an saargs file when running CodeChecker and
+            # when the selected mode is 'method' (which represents candidate runs
+            # that may use summaries). groundtruth/baseline modes ignore summaries.
+            if 'codechecker' in modules and args.summary != 'none' and args.mode == 'method':
+                # create temp saargs file pointing to chosen summary dir
+                try:
+                    # args.widen_loops is a boolean flag (True if --widen-loops was provided)
+                    temp_saargs_path = _write_temp_saargs_file(summary_dir_for_proj, widen_loops=bool(args.widen_loops))
+                except Exception as e:
+                    print(f"Failed to write temp saargs file: {e}", file=sys.stderr)
+                    temp_saargs_path = None
 
         try:
             # run codechecker
