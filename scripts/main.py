@@ -37,7 +37,7 @@ except Exception:
     import compile as compile_mod
 
 
-def _write_temp_saargs_file(summary_dir: str) -> str:
+def _write_temp_saargs_file(summary_dir: str, widen_loops: bool = True) -> str:
     """Create a temporary saargs file pointing analyzer to `summary_dir`.
 
     Returns the absolute path to the temporary file. Caller should remove it.
@@ -50,10 +50,13 @@ def _write_temp_saargs_file(summary_dir: str) -> str:
         f"-Xanalyzer summary-dir={summary_dir_expanded}\n"
         "-Xanalyzer -analyzer-max-loop -Xanalyzer 8\n"
         "-Xanalyzer -analyzer-config\n"
-        "-Xanalyzer mode=deep\n"
-        "-Xanalyzer -analyzer-config\n"
-        "-Xanalyzer widen-loops=true"
+        "-Xanalyzer mode=deep"
     )
+
+    # Optionally enable widen-loops analyzer config. Default behavior keeps it enabled
+    # to preserve existing behavior; callers may pass widen_loops=False to omit it.
+    if widen_loops:
+        contents = contents + "\n" + "-Xanalyzer -analyzer-config\n" + "-Xanalyzer widen-loops=true"
 
     tmp = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".saargs", encoding="utf-8")
     try:
@@ -101,6 +104,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--execute", action="store_true", help="Actually run CodeChecker instead of dry-run")
     p.add_argument("--codechecker-bin", default="CodeChecker", help="CodeChecker executable path")
     p.add_argument("--no-ctu", action="store_true", help="Disable CTU in CodeChecker run")
+    # Single parameter control for widen-loops: presence of the flag enables it.
+    # If omitted, widen-loops is disabled.
+    p.add_argument("--widen-loops", dest="widen_loops", action="store_true", default=False,
+                   help="If present, enable widen-loops analyzer config; otherwise it is disabled")
     p.add_argument("--timeout", type=int, default=None, help="Timeout seconds for CodeChecker run")
     p.add_argument("--verbose", action="store_true")
 
@@ -282,7 +289,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         if 'codechecker' in modules and args.summary != 'none':
             # create temp saargs file pointing to chosen summary dir
             try:
-                temp_saargs_path = _write_temp_saargs_file(summary_dir_for_proj)
+                # args.widen_loops is a boolean flag (True if --widen-loops was provided)
+                temp_saargs_path = _write_temp_saargs_file(summary_dir_for_proj, widen_loops=bool(args.widen_loops))
             except Exception as e:
                 print(f"Failed to write temp saargs file: {e}", file=sys.stderr)
                 temp_saargs_path = None
@@ -298,7 +306,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                         compile_commands=compile_commands_path,
                         ctu=not args.no_ctu,
                         codechecker_bin=args.codechecker_bin,
-                        extra_args=None,
+                        # Force CodeChecker to use 32 parallel jobs; callers can still
+                        # override other extra args via other interfaces if needed.
+                        extra_args=["-j32"],
                         cwd=project_src if os.path.isdir(project_src) else None,
                         timeout=args.timeout,
                         dry_run=not args.execute,
