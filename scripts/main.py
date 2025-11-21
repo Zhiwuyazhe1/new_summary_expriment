@@ -51,11 +51,10 @@ def _write_temp_saargs_file(summary_dir: str, widen_loops: bool = True, include_
     contents = (
         "-Xanalyzer -analyzer-config\n"
         "-Xanalyzer clear-overlap-offset=true\n"
-        "-Xanalyzer -analyzer-config\n"
     )
     # Optionally include the summary-dir directive
     if include_summary:
-        contents += f"-Xanalyzer summary-dir={summary_dir_expanded}\n"
+        contents += f"-Xanalyzer -analyzer-config\n-Xanalyzer summary-dir={summary_dir_expanded}\n"
     # Specify max-loop as an analyzer-config key=value so the analyzer
     # receives a proper key and value (avoids "key but no value" errors).
     contents += (
