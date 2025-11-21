@@ -56,8 +56,11 @@ def _write_temp_saargs_file(summary_dir: str, widen_loops: bool = True, include_
     # Optionally include the summary-dir directive
     if include_summary:
         contents += f"-Xanalyzer summary-dir={summary_dir_expanded}\n"
+    # Specify max-loop as an analyzer-config key=value so the analyzer
+    # receives a proper key and value (avoids "key but no value" errors).
     contents += (
-        "-Xanalyzer -analyzer-max-loop -Xanalyzer 8\n"
+        "-Xanalyzer -analyzer-config\n"
+        "-Xanalyzer analyzer-max-loop=8\n"
         "-Xanalyzer -analyzer-config\n"
         "-Xanalyzer mode=deep"
     )
